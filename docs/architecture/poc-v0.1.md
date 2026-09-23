@@ -1,6 +1,15 @@
 # Gaming Station Session Manager — POC v0.1 Architecture
 
-Status: proposal for review. No implementation is authorized by this document until the open questions in the last section are accepted or explicitly overridden.
+Status: decisions below are accepted. Step 1 (LAN `GET /api/health`) is the only implementation authorized so far. Do not start Step 2 until it is requested.
+
+Accepted on 2026-09-23:
+
+- The v0.1 TV client is a fullscreen browser at `/display/ps5-01`. Do not build a native Kotlin Android TV application in v0.1.
+- That browser page is only the POC client. The backend contract stays platform-independent so later clients can be native Android TV, Samsung Tizen, LG webOS, another smart-TV browser, or an external Android box, mini-PC, or device agent.
+- End Session is in v0.1. Staff can end a session while it is running, awaiting payment, or ready to resume. The station then shows AVAILABLE.
+- Start grants 120 seconds. Resume grants a new 120-second period. Both durations come from server configuration `Session:DefaultDurationSeconds`.
+- The TV has no separate PAID screen. After payment is marked, the TV stays on TIME EXPIRED until resume. The backend remains authoritative for state and expiry.
+- Step 1 configures the listen URL and the session duration only. The data directory arrives with SQLite in Step 2.
 
 This document is the blueprint for POC v0.1. It records requirements, the recommended shape of the system, the alternatives considered, and which decisions will be expensive to change later. It does not contain implementation code.
 
@@ -45,7 +54,7 @@ The scripted flow:
 | F4 | Dashboard shows the matching staff action | Start, Mark payment done, or Resume. |
 | F5 | Payment simulation advances the session | No money, no gateway. |
 | F6 | Resume returns the station to a running window | New `startedAtUtc` / `expiresAtUtc`. Previous window is not extended. |
-| F7 | Staff can end an open session and return the station to AVAILABLE | Required so the demo can be repeated. See assumption A4. |
+| F7 | Staff can end an open session and return the station to AVAILABLE | Confirmed. End is valid while the session is running, awaiting payment, or ready to resume. |
 | F8 | Real-time update on staff and display clients | After each committed transition. |
 | F9 | Reconnect and browser refresh show current server state | Including remaining time. |
 | F10 | The backend does not control the console | The TV is a status display. Staff operate the PS5 itself. |
@@ -388,17 +397,17 @@ Startup may apply EF migrations for this single-process POC. Revisit that before
 - **Advantages.** Android TV can look like an appliance without a second UI implementation. The same pattern (a shell that loads a URL) is how other platforms get kiosk behavior later.
 - **Disadvantages.** Still an Android build, sideload, and cleartext configuration. Easy to overgrow into a second client if someone starts rendering status in Kotlin.
 - **Complexity.** Low once the page exists. Should not block the first end-to-end proof.
-- **POC suitability.** Optional. Build it when the TV browser will not stay fullscreen or awake for the demo.
+- **POC suitability.** Out of v0.1. The accepted decision is the Android TV browser only. Revisit a shell only after the POC flow is proven and a set cannot stay on that page.
 - **Future scalability.** Good. The shell has no domain knowledge.
 - **Caveat.** The WebView must load the server page. It must not bundle a forked copy of the UI that can drift.
 
 #### Recommendation — TV client
 
-Build the **display as a web page served by the backend**. Prove the POC flow in a browser, including the Android TV browser. Add a **thin Android WebView shell only if** the physical set will not stay on that page unattended.
+**Accepted.** v0.1 uses a fullscreen browser at `/display/ps5-01`. No native Kotlin application and no WebView shell are part of this POC.
 
-Reasoning: the milestone is session truth and two live clients, not an Android UI toolkit. A native Kotlin renderer would be a valid second client of the same API later, and a poor primary client now, because every future panel would pay for that choice. The backend contract stays platform-neutral either way. The web display is how that neutrality is exercised in v0.1 instead of merely promised.
+The page is a client of the station API, the same way a later Tizen, webOS, Android, or mini-PC client will be. Serving that page from Kestrel must not make the API web-specific: no user-agent branches, no Android-only fields, and no session rules that exist only so the browser demo works. A platform that cannot run the page still uses `GET /api/stations/{code}` and, if it can, the same SignalR snapshot.
 
-This is a deliberate departure from "Android/Kotlin as the TV application." Kotlin remains appropriate for a shell, not for the session screens.
+Reasoning: the milestone is session truth and two live clients, not an Android UI toolkit. A native renderer remains a valid later client of the same contract. Building it now would spend the POC on one panel and would tempt the backend to grow around that client.
 
 ### 3.5 Staff dashboard
 
@@ -547,11 +556,24 @@ Server mapping:
 | Condition | `displayMode` | Staff action |
 |---|---|---|
 | No open session | `available` | Start session |
-| Open session `running`, and `now < expiresAtUtc` | `gameRunning` | None (show remaining time) |
-| `awaitingPayment`, or `running` but `now >= expiresAtUtc` | `timeExpired` | Mark payment done |
-| `readyToResume` | `timeExpired` | Resume session |
+| Open session `running`, and `now < expiresAtUtc` | `gameRunning` | End session. The countdown stays visible. |
+| `awaitingPayment`, or `running` but `now >= expiresAtUtc` | `timeExpired` | Mark payment done, or End |
+| `readyToResume` | `timeExpired` | Resume session, or End |
 
-The TV stays on TIME EXPIRED between payment and resume. The dashboard is where payment becomes visible. That matches the requested script: the TV returns to GAME RUNNING only when play actually resumes.
+Confirmed staff-visible flow:
+
+```text
+AVAILABLE
+  → GAME RUNNING          start, 120 seconds from server configuration
+  → TIME EXPIRED          server expiry; payment is pending
+  → payment simulation    staff marks payment; TV stays TIME EXPIRED
+  → RESUME                new 120-second period from server configuration
+  → GAME RUNNING
+  → END                   also allowed during an active running session
+  → AVAILABLE
+```
+
+The TV stays on TIME EXPIRED between payment and resume. There is no PAID screen. The dashboard is where payment becomes visible. The TV returns to GAME RUNNING only when play actually resumes.
 
 If a later state is inserted (for example a real gateway's `paymentPending`), the server maps it to an existing `displayMode` until the TV software is updated. Old panels keep working. The staff UI, which is easy to redeploy, learns the new button.
 
@@ -860,21 +882,22 @@ The Android TV is a host for that page. The backend does not read the user agent
 
 ```text
 Station ps5-01
-    ├── Android TV browser          now
-    ├── Android WebView shell       if kiosk behavior is required
-    ├── Samsung Tizen browser       later, same URL
-    ├── LG webOS browser            later, same URL
-    ├── Raspberry Pi / mini PC      later, same URL, for a dumb panel
-    └── A native app of any kind    later, same GET and same hub
+    ├── Browser at /display/ps5-01     v0.1, including the Android TV browser
+    ├── Native Android TV              later, same GET and same hub
+    ├── Samsung Tizen                  later, same contract
+    ├── LG webOS                       later, same contract
+    ├── Other browser-based TVs        later, same contract
+    └── Android box / mini-PC / agent  later, same contract
 ```
 
 A platform that cannot hold a WebSocket polls `GET /api/stations/{code}`. It is late by one poll interval and otherwise correct. No backend change is required to permit that.
 
 ### 9.3 What we will not build yet
 
+- A native Kotlin Android TV app, WebView shell, or other device agent.
 - A device registry, pairing PIN, or claim flow.
 - Per-platform endpoints or payloads.
-- Server logic that branches on Android versus web.
+- Server logic that branches on browser, Android, Tizen, or webOS.
 - A stored mapping from hardware serial to station. The bookmarked URL is the mapping.
 
 When Stage 2 needs "which box is online," add a Device row that points at `StationId`, with a client-generated install id and a platform string. The session coordinator should still ignore it. Presence and inventory are not session truth.
@@ -883,10 +906,9 @@ Until that exists, a replacement TV is reconfigured by opening the same URL. Tha
 
 ### 9.4 Android TV practical notes (deployment, not domain)
 
-- The POC base URL is HTTP. A WebView shell must allow cleartext traffic to the PC. The Android TV browser can open `http://` directly.
+- The POC base URL is HTTP. The Android TV browser opens `http://<pc>:5080/display/ps5-01` directly. A native shell is not part of v0.1.
 - Pin the PC to a DHCP reservation before bookmarking the TV.
-- Prefer a thin shell when the demo must survive remote-control exits and screen dimming. The shell's only configuration is the display URL.
-- Do not bake `192.168.x.x` into a source file. The page uses relative `/api` and `/hubs/stations`. The shell, if it exists, stores the URL as configuration.
+- The display page, when it is built in a later step, uses relative `/api` and `/hubs/stations`. Do not bake a LAN address into source. A future native client stores one base URL in its own configuration.
 
 ---
 
@@ -1056,7 +1078,7 @@ None of those require the TV to become the aggregate.
 | Database | SQLite; PostgreSQL; SQL Server | SQLite via EF Core, WAL, file outside the build output | No database install for v0.1. Provider stays swappable if business code stays on EF and UTC. |
 | Timer | Client-owned; server tick stream; hybrid timestamps | Server `expiresAtUtc`, client animation, server-committed expiry | Survives disconnect, restart, and multiple screens. Traffic stays on transitions. |
 | Expiry mechanism | Per-session memory timer; lazy only; Hangfire; sweep | One-second sweep plus lazy reconcile on read | Restart-safe, one code path, push still happens if nobody is polling. |
-| TV client | Native Kotlin; Unity; web page; WebView shell | Web display page; optional thin Android shell | Same UI for Android TV now and other panels later. Backend does not learn TV brands. |
+| TV client | Native Kotlin; Unity; web page; WebView shell | Browser page at `/display/ps5-01` for v0.1 | Accepted. Later native, Tizen, webOS, and device-agent clients use the same HTTP contract. The backend does not learn the panel. |
 | Staff UI | React+TS; Blazor; plain HTML | React + TypeScript, later hosted on the same site | Staff UI will grow. Blazor Server is a weak fit for a roaming phone. The display stays plain JS. |
 | Station model | TV-centric; console-centric; station with equipment tables; station as aggregate | Station as the only aggregate. `consoleLabel` string. No device tables | Matches how time is sold. Avoids empty tables and PS5 coupling. |
 | Device model | Pairing registry now; anonymous URL now | Bookmark `/display/{code}` | Enough to associate a panel. A registry has no second feature to serve yet. |
@@ -1077,13 +1099,13 @@ Suggested layout and names: `GamingStation.Api`, a `SessionCoordinator`, a `Sess
 
 ### Step 1 — Backend skeleton
 
-- **Build.** ASP.NET Core host. Kestrel listens on the LAN interface and a chosen port (for example 5080). `GET /api/health` returns status and `serverTimeUtc`. Configuration file for URLs, data directory, and `Session:DefaultDurationSeconds=120`. Logging to the console.
+- **Build.** ASP.NET Core host. Kestrel listens on the LAN interface and a chosen port (for example 5080). `GET /api/health` returns status and `serverTimeUtc`. Configuration for the listen URL and `Session:DefaultDurationSeconds=120`. Logging to the console. No database and no data directory.
 - **Test.** From the PC: health returns JSON. From a phone on the same Wi-Fi: the same URL using the PC's LAN address. Confirm a localhost-only binding fails this test.
-- **Done.** A second device can reach health. The port and bind address are configuration, not a hardcoded loopback URL.
+- **Done.** A second device can reach health. The port and bind address are configuration, not a hardcoded loopback URL. Session duration is loaded from configuration and is not used for behavior until sessions exist.
 
 ### Step 2 — Database
 
-- **Build.** EF Core SQLite. WAL. Data file in the configured directory, outside the build output. `GamingStation` and `Session` with the fields and the filtered unique index from section 4. String status values. Migrate on startup. Seed `ps5-01` / `PS5 #01` / console label `PS5` if that code is missing. Do not seed sessions. Do not reseed or duplicate the station on restart.
+- **Build.** EF Core SQLite. WAL. This is the step that introduces a configured data directory, outside the build output. `GamingStation` and `Session` with the fields and the filtered unique index from section 4. String status values. Migrate on startup. Seed `ps5-01` / `PS5 #01` / console label `PS5` if that code is missing. Do not seed sessions. Do not reseed or duplicate the station on restart.
 - **Test.** Start twice: still one station. Delete is not required. Inspect the file path and confirm a rebuild does not move or wipe it. Round-trip a UTC timestamp through a scratch test or a short-lived developer check.
 - **Done.** Schema matches section 4. Seed is idempotent. The file survives a restart and a rebuild.
 
@@ -1109,9 +1131,7 @@ Suggested layout and names: `GamingStation.Api`, a `SessionCoordinator`, a `Sess
 
 - **Build.** Plain page at `/display/{code}` served by the API. Large AVAILABLE / GAME RUNNING / TIME EXPIRED from `displayMode`. Same countdown formula. Refetch when the animation hits zero. Rejoin `station:{code}` after reconnect. Disconnected banner. No command buttons.
 - **Test.** Desktop browser at `/display/ps5-01` first. Then the Android TV browser, or a second phone if the set is not ready. Kill the page mid-session and reopen it: remaining time matches the dashboard and was not restarted.
-- **Done.** The display's words change only when a snapshot's `displayMode` changes. The page has no API host hardcoded. A short note in the repo explains the exact TV URL and the cleartext caveat for a later WebView shell.
-
-The WebView shell is not part of this step unless the open question in the last section requires it.
+- **Done.** The display's words change only when a snapshot's `displayMode` changes. The page has no API host hardcoded. The Android TV opens this URL in its browser. No Kotlin project is added.
 
 ### Step 7 — Integration on one origin
 
@@ -1133,20 +1153,27 @@ The WebView shell is not part of this step unless the open question in the last 
 
 ---
 
-## Assumptions
+## Accepted decisions and remaining assumptions
+
+Confirmed for implementation:
+
+| Id | Decision |
+|---|---|
+| A2 | Start and resume each use 120 seconds from `Session:DefaultDurationSeconds`. Staff cannot type a duration in v0.1. |
+| A3 | The TV has no PAID screen. It stays on TIME EXPIRED from expiry until resume. |
+| A4 | End Session is in v0.1, including ending a session that is still running. |
+| A10 | v0.1 display host is the browser page `/display/ps5-01`. Native Android TV, Tizen, webOS, and device agents are later clients of the same contract. |
+
+Still assumptions, not re-opened by the review:
 
 | Id | Assumption |
 |---|---|
 | A1 | The demo network is private. Guest devices are not on the same L2 network as the API. |
-| A2 | Default duration is 120 seconds from server configuration for both the initial start and resume. Staff cannot type a duration in v0.1. |
-| A3 | Between payment and resume the TV remains on TIME EXPIRED. |
-| A4 | End session is in scope so the station can return to AVAILABLE without deleting the database. |
 | A5 | One display is bookmarked per station. Extra browsers may also watch; they are not a new product concept. |
 | A6 | The backend clock is roughly correct. Clients do not need correct clocks. |
 | A7 | English UI strings are enough for the POC. |
 | A8 | HTTP on the LAN is enough for the POC. |
 | A9 | "PS5" is a label. The POC does not integrate with PlayStation hardware. |
-| A10 | A browser on the Android TV is an acceptable v0.1 display host unless open question Q1 overrides it. |
 
 ---
 
@@ -1158,7 +1185,7 @@ Staff commands travel over a small REST API. After each commit the process publi
 
 The timer is `expiresAtUtc`. Clients only animate it. A one-second in-process sweep, plus a check on read, moves a due session to awaiting payment and notifies both screens. Payment is a simulated status change. Resume opens a new server-timed window. Disconnect never pauses or destroys a session.
 
-The staff UI is React + TypeScript. The TV UI is a plain web page served by the same process at `/display/{code}`, opened on the Android TV. A native Kotlin shell is optional and contains no session logic. The same page is the path to Tizen, webOS, and a browser stick on a dumb TV.
+The staff UI is React + TypeScript. The v0.1 TV client is a plain web page at `/display/{code}`, opened fullscreen in the Android TV browser. Native Android TV, Tizen, webOS, and an external device agent are later clients. They are not v0.1 deliverables, and the API must not grow a dependency on the browser client.
 
 Nothing in the client hardcodes the PC's address. That is what later allows a different host, and what allows session authority to stay at the branch if a cloud control plane is added. v0.1 does not build that cloud, auth, real payments, or equipment tables.
 
@@ -1166,26 +1193,12 @@ Nothing in the client hardcodes the PC's address. That is what later allows a di
 
 ## Open questions
 
-These need a decision before the corresponding implementation step. Everything else in this document can be implemented as written.
-
-**Q1 — Display host for the physical Android TV (blocks step 6, not steps 1–5).**
-
-Is a fullscreen browser pointed at `/display/ps5-01` acceptable for the POC demo, with a thin WebView shell added only if the set will not stay awake and fullscreen?
-
-The alternative is a native Kotlin UI that renders the three states itself. That is a valid client of the same API and a larger, Android-only step. It does not change the backend contract above.
-
-**Q2 — End session (blocks nothing if A4 stands).**
-
-Confirm that a staff **End** action is part of v0.1 so the demo can return to AVAILABLE. If the scripted demo must not show that button, the API can still expose end for test reset, and the dashboard can hide it.
-
-No other product choice is blocking. Duration (A2), TV wording between payment and resume (A3), and "no login on a private LAN" (A1) are assumptions. Override them in review if they are wrong.
+None. Q1 and Q2 are decided, and the duration and TV-wording assumptions are confirmed. Do not add a native TV client, a data directory, or session behavior under this decision set.
 
 ---
 
 ## Next step
 
-Do not write the café application yet.
+Step 1 is implemented in `src/GamingStation.Api`: `GET /api/health`, listen URL `http://0.0.0.0:5080`, and `Session:DefaultDurationSeconds` of 120. It does not include SQLite, a data directory, SignalR, React, the display page, or authentication.
 
-Review this document, answer Q1, and confirm or correct A2–A4.
-
-The first implementation step, after that review, is **Step 1 — Backend skeleton**: an ASP.NET Core process that a phone on the LAN can reach at `GET /api/health`, bound to the LAN interface, with configuration for port, data directory, and session duration. No database, no SignalR, and no UI in that step.
+When this step is accepted, the following implementation step is **Step 2 — Database**. That step introduces the SQLite file and its data directory. Do not start it until it is requested.
