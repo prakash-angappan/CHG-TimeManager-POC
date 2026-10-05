@@ -43,3 +43,16 @@ dependencies {
     testImplementation("androidx.test:core:1.6.1")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
 }
+
+// Room 2.8.5 schema classes were generated for serialization 1.8.1.
+// An older serialization jar makes schema import fail during KSP.
+configurations.configureEach {
+    resolutionStrategy {
+        force(
+            "org.jetbrains.kotlinx:kotlinx-serialization-core:1.8.1",
+            "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.8.1",
+            "org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1",
+            "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.8.1",
+        )
+    }
+}
