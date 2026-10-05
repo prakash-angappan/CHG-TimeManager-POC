@@ -4,3 +4,7 @@ obj/
 *.user
 .idea/
 *.DotSettings.user
+*.db
+*.db-wal
+*.db-shm
+staff/node_modules/

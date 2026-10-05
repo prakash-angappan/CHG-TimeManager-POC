@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>Station display</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      color: #fff;
+      font-family: Roboto, "Segoe UI", Arial, sans-serif;
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+    }
+
+    body {
+      box-sizing: border-box;
+      min-height: 100%;
+      display: flex;
+      flex-direction: column;
+      /* Inset for television overscan so text stays inside the visible picture. */
+      padding: 5vh 6vw 4vh;
+      text-align: center;
+      cursor: none;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+      overscroll-behavior: none;
+    }
+
+    main {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #station {
+      margin: 0 0 0.35em;
+      font-size: 6vh;
+      font-size: clamp(2.4rem, 6vh, 5rem);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      line-height: 1.1;
+    }
+
+    #state {
+      margin: 0;
+      font-size: 12vh;
+      font-size: clamp(4.2rem, 12vh, 10rem);
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      line-height: 1.05;
+    }
+
+    body[data-session-state="running"] #state {
+      font-size: 7vh;
+      font-size: clamp(2.8rem, 7vh, 6rem);
+    }
+
+    body[data-session-state="awaitingPayment"] #state {
+      color: #ffcc4d;
+    }
+
+    #countdown {
+      display: none;
+      margin: 0.06em 0 0;
+      font-size: 26vh;
+      font-size: clamp(7rem, 26vh, 18rem);
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.03em;
+      line-height: 0.95;
+    }
+
+    #countdown.visible {
+      display: block;
+    }
+
+    #connection {
+      flex: 0 0 auto;
+      margin: 2vh 0 0;
+      font-size: 4.2vh;
+      font-size: clamp(1.6rem, 4.2vh, 3.2rem);
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      line-height: 1.2;
+    }
+
+    body[data-connection="connected"] #connection {
+      color: #b7f5c8;
+    }
+
+    body[data-connection="reconnecting"] #connection {
+      color: #ffe08a;
+    }
+
+    body[data-connection="lost"] #connection {
+      color: #ffb4a8;
+    }
+  </style>
+</head>
+<body data-connection="reconnecting">
+  <main>
+    <p id="station"></p>
+    <h1 id="state"></h1>
+    <p id="countdown"></p>
+  </main>
+  <p id="connection" role="status">RECONNECTING</p>
+  <script src="/lib/signalr.min.js"></script>
+  <script src="/js/station-display.js"></script>
+</body>
+</html>
