@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SignalR manual test</title>
+</head>
+<body>
+  <h1>SignalR manual test</h1>
+  <p>This page is a connection harness, not the staff or TV application.</p>
+  <p>
+    Station code
+    <input id="code" value="PS5-01" />
+    <button id="connect" type="button">Connect</button>
+  </p>
+  <p>
+    <button id="start" type="button" disabled>Start session</button>
+    <button id="end" type="button" disabled>End session</button>
+  </p>
+  <pre id="log"></pre>
+  <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+  <script>
+    const logElement = document.getElementById("log");
+    const log = (message) => {
+      logElement.textContent += message + "\n";
+    };
+
+    let connection;
+    let sessionId;
+
+    async function loadState(code) {
+      const response = await fetch("/api/stations");
+      const stations = await response.json();
+      const station = stations.find((item) => item.stationCode === code) ?? null;
+      log("GET /api/stations " + JSON.stringify(station));
+      sessionId = station && station.currentSession ? station.currentSession.id : null;
+    }
+
+    async function joinStation(code) {
+      await connection.invoke("JoinStation", code);
+      log("Joined station:" + code);
+    }
+
+    document.getElementById("connect").onclick = async () => {
+      const code = document.getElementById("code").value.trim();
+      connection = new signalR.HubConnectionBuilder()
+        .withUrl("/hubs/stations")
+        .withAutomaticReconnect()
+        .build();
+
+      connection.on("StationStateChanged", (snapshot) => {
+        log("StationStateChanged " + JSON.stringify(snapshot));
+        sessionId = snapshot.currentSession ? snapshot.currentSession.id : null;
+      });
+
+      connection.onreconnected(async () => {
+        log("Reconnected. Reading current state, then rejoining.");
+        await loadState(code);
+        await joinStation(code);
+      });
+
+      await connection.start();
+      log("Connected.");
+      await loadState(code);
+      await joinStation(code);
+      document.getElementById("start").disabled = false;
+      document.getElementById("end").disabled = false;
+    };
+
+    document.getElementById("start").onclick = async () => {
+      const code = document.getElementById("code").value.trim();
+      const response = await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stationCode: code })
+      });
+      log("POST /api/sessions " + response.status + " " + await response.text());
+    };
+
+    document.getElementById("end").onclick = async () => {
+      if (!sessionId) {
+        log("No open session id yet.");
+        return;
+      }
+
+      const response = await fetch("/api/sessions/" + sessionId + "/end", { method: "POST" });
+      log("POST end " + response.status + " " + await response.text());
+    };
+  </script>
+</body>
+</html>
